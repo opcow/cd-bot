@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math/rand"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 var lastCD time.Time
 var start = make(chan int)
+var quit = make(chan bool)
 
 // Config blah
 type Config struct {
@@ -61,9 +63,9 @@ func main() {
 		fmt.Println("Failed connecting")
 		return
 	}
+	//daemon.SdNotify(false, "READY=1")
 
 	chanName := config.Channel
-
 	seed := rand.NewSource(time.Now().Unix())
 	rnd := rand.New(seed)
 
@@ -75,9 +77,10 @@ func main() {
 	ircobj.AddCallback("PRIVMSG", func(event *irc.Event) {
 
 		if event.Message() == config.Secret+" bye" {
+			quit <- true
 			ircobj.Part(chanName)
 			ircobj.Quit()
-			ircobj.Disconnect()
+			os.Exit(0)
 		}
 
 		m := strings.Split(event.Message(), " ")
@@ -87,7 +90,7 @@ func main() {
 		if m[0] == "!cd" {
 			if len(m) > 1 {
 				var count int
-				_, err := fmt.Sscanf("010", "%v", &count)
+				_, err := fmt.Sscanf(m[1], "%v", &count)
 				//count, err := strconv.Atoi(m[1])
 				if err != nil {
 					ircobj.Privmsg(chanName, idiot[rnd.Intn(len(idiot))])
@@ -142,25 +145,29 @@ func main() {
 func cdPrinter(conn *irc.Connection, chanName string) {
 	lastCD := time.Now().Add(time.Second * -20)
 	for {
-		i := <-start
-		if throttle(lastCD) {
-			lastCD = time.Now()
-			ticker := time.NewTicker(1 * time.Second)
-			for range ticker.C {
-				if i == 0 {
-					break
+		select {
+		case <-quit:
+			return
+		case i := <-start:
+			if throttle(lastCD) {
+				lastCD = time.Now()
+				ticker := time.NewTicker(1 * time.Second)
+				for range ticker.C {
+					if i == 0 {
+						break
+					}
+					conn.Privmsg(chanName, strconv.Itoa(i))
+					if i < 0 {
+						i++
+					} else {
+						i--
+					}
 				}
-				conn.Privmsg(chanName, strconv.Itoa(i))
-				if i < 0 {
-					i++
-				} else {
-					i--
-				}
+				ticker.Stop()
+				conn.Privmsg(chanName, "\x0309Go!")
+			} else {
+				conn.Privmsg(chanName, "\x0304No!")
 			}
-			ticker.Stop()
-			conn.Privmsg(chanName, "\x0309Go!")
-		} else {
-			conn.Privmsg(chanName, "\x0304No!")
 		}
 	}
 }
